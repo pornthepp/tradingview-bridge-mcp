@@ -12,6 +12,10 @@ Works with **any MCP-compatible AI agent** — Claude Code, Codex CLI, Gemini CL
 | `health_check` | Verify CDP connection and TradingView tab status |
 | `get_chart_state` | Read symbol, timeframe, OHLCV, and last price from the active chart |
 | `navigate` | Change chart symbol and/or timeframe |
+| `draw_lines` | Draw horizontal support/resistance lines at specified price levels |
+| `draw_trendline` | Draw a trendline between two time+price points |
+| `draw_rectangle` | Draw a rectangle zone (supply/demand, consolidation areas) |
+| `remove_drawings` | Remove all drawings or specific ones by ID |
 | `evaluate` | Run arbitrary JavaScript inside the TradingView page |
 
 ## Prerequisites
@@ -55,6 +59,20 @@ and tell me the current symbol, timeframe, and price data.
 ```
 Open TradingView, navigate to BTCUSD on the daily timeframe,
 and describe what you see on the chart.
+```
+
+### Draw support/resistance
+
+```
+Draw horizontal support lines at 59000 and 60000 (green),
+and resistance lines at 64000 and 65000 (orange) on my chart.
+```
+
+### Draw zones and trendlines
+
+```
+Mark the supply zone between 71000-74000 as a red rectangle,
+and draw a trendline from the recent swing low to the current price.
 ```
 
 ### Advanced: run JavaScript
