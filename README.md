@@ -141,8 +141,7 @@ AI Agent  ──MCP──▶  tradingview-bridge-mcp  ──CDP WebSocket──�
 
 ## Limitations
 
-- **`get_chart_state` reads only 1 candle** — it returns OHLCV from the chart legend (the candle under cursor). Use `get_bars` for bulk historical data.
-- **`get_bars` returns only loaded data** — TradingView loads a limited number of bars. Scroll left on the chart to load more history before fetching.
+- **`get_bars` returns only loaded data** — TradingView loads ~300 bars by default. Scroll left on the chart to load more history before fetching.
 - **Drawing tools need timestamps** — `draw_trendline` and `draw_rectangle` require Unix timestamps (seconds) for point coordinates. Use `evaluate` to query visible range first if needed.
 - **`pine_compile` uses DOM interaction** — it interacts with the Pine Editor via DOM selectors which may break on TradingView UI updates. Open Pine Editor (Alt+P) before using.
 - **DOM-based reads may break** — OHLCV and last price in `get_chart_state` are read from DOM elements. TradingView UI updates may change class names. Symbol and timeframe (parsed from page title) are stable.

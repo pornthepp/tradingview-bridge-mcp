@@ -197,33 +197,40 @@ async function openTVSession(port = 9222) {
 const JS_READ_CHART = `
 (function() {
   var r = {};
-  var parts = document.title.split(/\\s*[\\u2014\\u2013]\\s*TradingView/);
-  if (parts[0]) {
-    var ci = parts[0].lastIndexOf(',');
-    if (ci !== -1) {
-      r.symbol = parts[0].substring(0, ci).trim();
-      r.timeframe = parts[0].substring(ci + 1).trim();
-    } else {
-      r.symbol = parts[0].trim();
-    }
+  try {
+    var chart = TradingViewApi.activeChart();
+    r.symbol = chart.symbol();
+    r.resolution = chart.resolution();
+    try {
+      var info = chart.symbolExt();
+      r.exchange = info.exchange;
+      r.description = info.description;
+      r.type = info.type;
+      r.full_name = info.full_name;
+    } catch(e) {}
+    try { r.chartType = chart.chartType(); } catch(e) {}
+    try {
+      var range = chart.getVisibleRange();
+      r.visibleFrom = range.from;
+      r.visibleTo = range.to;
+    } catch(e) {}
+    try {
+      var barsObj = chart.getSeries()._series.bars();
+      var items = barsObj._items;
+      var keys = Object.keys(items).sort(function(a,b) { return Number(a) - Number(b); });
+      r.barsLoaded = keys.length;
+      if (keys.length > 0) {
+        var last = items[keys[keys.length - 1]];
+        var v = last.value || last;
+        r.lastBar = { time: v[0], open: v[1], high: v[2], low: v[3], close: v[4], volume: v[5] };
+      }
+    } catch(e) {}
+  } catch(e) {
+    r.error = e.message;
   }
   r.url = location.href;
   var m = location.href.match(/chart\\/([^/?#]+)/);
   if (m) r.chartId = m[1];
-  try {
-    var items = document.querySelectorAll('[data-name="legend-source-item"]');
-    if (items.length > 0) {
-      var vals = items[0].querySelectorAll('[class*="valueValue"]');
-      var nums = [];
-      vals.forEach(function(v) { var t = v.textContent.trim(); if (t) nums.push(t); });
-      if (nums.length >= 5) { r.open = nums[0]; r.high = nums[1]; r.low = nums[2]; r.close = nums[3]; r.volume = nums[4]; }
-      else if (nums.length >= 4) { r.open = nums[0]; r.high = nums[1]; r.low = nums[2]; r.close = nums[3]; }
-    }
-  } catch(e) {}
-  try {
-    var pe = document.querySelector('[class*="lastPrice"]');
-    if (pe) r.lastPrice = pe.textContent.trim();
-  } catch(e) {}
   return JSON.stringify(r);
 })()
 `;
@@ -428,12 +435,18 @@ server.tool(
 
       const lines = [];
       if (data.symbol) lines.push(`Symbol: ${data.symbol}`);
-      if (data.timeframe) lines.push(`Timeframe: ${data.timeframe}`);
-      if (data.lastPrice) lines.push(`Last price: ${data.lastPrice}`);
-      if (data.open) lines.push(`O: ${data.open}  H: ${data.high}  L: ${data.low}  C: ${data.close}`);
-      if (data.volume) lines.push(`Volume: ${data.volume}`);
+      if (data.full_name) lines.push(`Full name: ${data.full_name}`);
+      if (data.description) lines.push(`Description: ${data.description}`);
+      if (data.exchange) lines.push(`Exchange: ${data.exchange}`);
+      if (data.type) lines.push(`Type: ${data.type}`);
+      if (data.resolution) lines.push(`Timeframe: ${data.resolution}`);
+      if (data.lastBar) {
+        const b = data.lastBar;
+        lines.push(`Last bar: O:${b.open} H:${b.high} L:${b.low} C:${b.close} V:${b.volume}`);
+        lines.push(`Last bar time: ${new Date(b.time * 1000).toISOString()}`);
+      }
+      if (data.barsLoaded) lines.push(`Bars loaded: ${data.barsLoaded}`);
       if (data.chartId) lines.push(`Chart ID: ${data.chartId}`);
-      if (data.url) lines.push(`URL: ${data.url}`);
 
       return {
         content: [
@@ -882,19 +895,15 @@ server.tool(
 // --- Tool 9: get_bars ---
 server.tool(
   "get_bars",
-  "Fetch OHLCV bar data (multiple candles) from the currently loaded TradingView chart. Uses TradingViewApi.activeChart().exportData() to get historical data that is already loaded in the chart.",
+  "Fetch OHLCV bar data (multiple candles) from the currently loaded TradingView chart. Reads directly from the chart's internal bar cache. Returns time, open, high, low, close, volume for each bar.",
   {
     count: z
       .number()
       .default(100)
       .describe("Number of most recent bars to return (default: 100)"),
-    include_studies: z
-      .boolean()
-      .default(false)
-      .describe("Include indicator/study values in the output (default: false)"),
     port: z.number().default(9222).describe("CDP debug port (default: 9222)"),
   },
-  async ({ count, include_studies, port }) => {
+  async ({ count, port }) => {
     let session;
     try {
       session = await openTVSession(port);
@@ -906,18 +915,21 @@ server.tool(
       }
 
       const result = await session.evaluate(`
-        (async function() {
+        (function() {
           try {
             var chart = TradingViewApi.activeChart();
-            var data = await chart.exportData({
-              includeTime: true,
-              includeSeries: true,
-              includeStudies: ${include_studies}
+            var barsObj = chart.getSeries()._series.bars();
+            var items = barsObj._items;
+            var keys = Object.keys(items).sort(function(a,b) { return Number(a) - Number(b); });
+            var selected = keys.slice(-${count});
+            var bars = selected.map(function(k) {
+              var v = items[k].value || items[k];
+              return { time: v[0], open: v[1], high: v[2], low: v[3], close: v[4], volume: v[5] };
             });
-            var bars = data.data.slice(-${count});
             return JSON.stringify({
-              schema: data.schema,
-              total_loaded: data.data.length,
+              symbol: chart.symbol(),
+              resolution: chart.resolution(),
+              total_loaded: keys.length,
               returned: bars.length,
               bars: bars
             });
@@ -934,32 +946,25 @@ server.tool(
           content: [
             {
               type: "text",
-              text: `Failed to export chart data.\n\nError: ${data.error}\n\nThis may mean exportData() is not available. Try using evaluate tool to explore: TradingViewApi.activeChart()`,
+              text: `Failed to read bar data.\n\nError: ${data.error}`,
             },
           ],
           isError: true,
         };
       }
 
-      let output = `Bars: ${data.returned} of ${data.total_loaded} loaded\nSchema: ${data.schema.join(", ")}\n\n`;
+      let output = `${data.symbol} ${data.resolution} — ${data.returned} of ${data.total_loaded} bars loaded\n\n`;
+      output += `time | open | high | low | close | volume\n`;
 
       const maxPreview = Math.min(data.returned, 10);
       for (let i = 0; i < maxPreview; i++) {
-        const bar = data.bars[i];
-        const row = data.schema.map((col, j) => {
-          if (col.toLowerCase() === "time") {
-            return new Date(bar[j] * 1000).toISOString().slice(0, 16);
-          }
-          return bar[j];
-        });
-        output += row.join(" | ") + "\n";
+        const b = data.bars[i];
+        output += `${new Date(b.time * 1000).toISOString().slice(0, 10)} | ${b.open} | ${b.high} | ${b.low} | ${b.close} | ${b.volume}\n`;
       }
 
       if (data.returned > 10) {
         output += `... and ${data.returned - 10} more bars\n`;
       }
-
-      output += `\nFull data returned as JSON in the bars array (${data.returned} rows x ${data.schema.length} columns).`;
 
       return {
         content: [
