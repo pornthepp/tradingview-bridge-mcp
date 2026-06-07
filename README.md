@@ -34,7 +34,7 @@ Required for `Invoke-CommandInDesktopPackage` to work with MSIX apps.
 
 ### 2. Install TradingView Desktop
 
-Download from [tradingview.com/desktop](https://www.tradingview.com/desktop/).
+Download from [tradingview.com/desktop](https://www.tradingview.com/desktop/). Works with the free plan.
 
 ### 3. Clone and install
 
@@ -46,15 +46,7 @@ npm install
 
 ### 4. Add to your AI agent
 
-#### Claude Code
-
-```bash
-claude mcp add tradingview-bridge -- node /full/path/to/tradingview-bridge-mcp/src/index.js
-```
-
-#### Codex CLI
-
-Add to your MCP config file (`~/.codex/config.json` or project-level):
+This is a **stdio** MCP server. Most MCP-compatible agents use the same config format:
 
 ```json
 {
@@ -67,30 +59,11 @@ Add to your MCP config file (`~/.codex/config.json` or project-level):
 }
 ```
 
-#### Gemini CLI
+Add the snippet above to your agent's MCP config file — or just ask your AI agent:
 
-Add to your MCP settings file:
+> "Add an MCP server called tradingview-bridge that runs `node /full/path/to/tradingview-bridge-mcp/src/index.js`"
 
-```json
-{
-  "mcpServers": {
-    "tradingview-bridge": {
-      "command": "node",
-      "args": ["/full/path/to/tradingview-bridge-mcp/src/index.js"]
-    }
-  }
-}
-```
-
-#### Generic MCP client (stdio transport)
-
-This server uses **stdio transport**. Start it with:
-
-```bash
-node /full/path/to/tradingview-bridge-mcp/src/index.js
-```
-
-Then communicate via stdin/stdout using the [MCP protocol](https://modelcontextprotocol.io/).
+The agent will handle the rest.
 
 ## Usage
 
