@@ -34,7 +34,7 @@ Required for `Invoke-CommandInDesktopPackage` to work with MSIX apps.
 
 ### 2. Install TradingView Desktop
 
-Download from [tradingview.com/desktop](https://www.tradingview.com/desktop/). A paid plan is required for real-time data.
+Download from [tradingview.com/desktop](https://www.tradingview.com/desktop/).
 
 ### 3. Clone and install
 
