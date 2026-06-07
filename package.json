@@ -1,7 +1,7 @@
 {
   "name": "tradingview-bridge-mcp",
-  "version": "1.0.0",
-  "description": "MCP server to launch TradingView Desktop with CDP debug port and read chart state. Works with any MCP-compatible AI agent.",
+  "version": "2.0.0",
+  "description": "MCP server that connects AI agents to TradingView via Chrome DevTools Protocol. Read chart data, navigate symbols, and run JavaScript inside TradingView.",
   "main": "src/index.js",
   "type": "module",
   "bin": {
