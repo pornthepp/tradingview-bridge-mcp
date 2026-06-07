@@ -10,7 +10,7 @@ Works with **any MCP-compatible AI agent** — Claude Code, Codex CLI, Gemini CL
 |------|-------------|
 | `launch_tradingview` | Launch TradingView Desktop with `--remote-debugging-port=9222` |
 | `health_check` | Verify CDP port is responding |
-| `get_chart_state` | Read current chart URL, title, and tab info |
+| `get_chart_state` | Read symbol, timeframe, OHLCV, and price from the active chart |
 
 ## Prerequisites
 
@@ -46,11 +46,11 @@ Clone and install the MCP server from https://github.com/pornthepp/tradingview-b
 then register it as an MCP server named "tradingview-bridge" using stdio transport.
 ```
 
-### Read chart state
+### Read chart data
 
 ```
-Launch TradingView with CDP enabled, verify the connection,
-and tell me what symbol and timeframe are currently displayed on the chart.
+Launch TradingView with CDP enabled, then read the chart state
+and tell me the current symbol, timeframe, and price data.
 ```
 
 That's it — your AI agent handles cloning, installing, configuring, and running the tools.

@@ -6,10 +6,11 @@ import { z } from "zod";
 import { execSync, spawn } from "child_process";
 import { existsSync } from "fs";
 import http from "http";
+import WebSocket from "ws";
 
 const server = new McpServer({
   name: "tradingview-bridge",
-  version: "1.0.0",
+  version: "1.1.0",
 });
 
 // --- Helper: find TradingView MSIX package ---
@@ -71,8 +72,8 @@ function checkCDP(port = 9222) {
   });
 }
 
-// --- Helper: get chart state via CDP ---
-function getChartState(port = 9222) {
+// --- Helper: find TradingView tab ---
+function findTVTab(port = 9222) {
   return new Promise((resolve) => {
     const req = http.get(`http://127.0.0.1:${port}/json`, (res) => {
       let data = "";
@@ -83,27 +84,116 @@ function getChartState(port = 9222) {
           const tvTab = tabs.find(
             (t) => t.url && t.url.includes("tradingview.com")
           );
-          if (!tvTab) return resolve({ found: false });
-          if (!tvTab.webSocketDebuggerUrl) return resolve({ found: false });
-
-          resolve({
-            found: true,
-            url: tvTab.url,
-            title: tvTab.title,
-            targetId: tvTab.id,
-          });
+          resolve(tvTab || null);
         } catch {
-          resolve({ found: false });
+          resolve(null);
         }
       });
     });
-    req.on("error", () => resolve({ found: false }));
+    req.on("error", () => resolve(null));
     req.setTimeout(5000, () => {
       req.destroy();
-      resolve({ found: false });
+      resolve(null);
     });
   });
 }
+
+// --- Helper: evaluate JavaScript in a tab via CDP WebSocket ---
+function cdpEvaluate(wsUrl, expression, timeout = 8000) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    const timer = setTimeout(() => {
+      ws.close();
+      reject(new Error("CDP WebSocket timed out"));
+    }, timeout);
+
+    ws.on("open", () => {
+      ws.send(
+        JSON.stringify({
+          id: 1,
+          method: "Runtime.evaluate",
+          params: { expression, returnByValue: true },
+        })
+      );
+    });
+
+    ws.on("message", (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.id === 1) {
+          clearTimeout(timer);
+          ws.close();
+          if (msg.result?.exceptionDetails) {
+            reject(new Error(msg.result.exceptionDetails.text || "JS error"));
+          } else {
+            resolve(msg.result?.result?.value);
+          }
+        }
+      } catch (e) {
+        clearTimeout(timer);
+        ws.close();
+        reject(e);
+      }
+    });
+
+    ws.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+// JavaScript to extract chart data from TradingView page
+const CHART_EXTRACT_JS = `
+(function() {
+  var r = {};
+
+  // 1) Parse document.title — format: "SYMBOL, TIMEFRAME — TradingView"
+  var parts = document.title.split(/\\s*[—–]\\s*TradingView/);
+  if (parts[0]) {
+    var commaIdx = parts[0].lastIndexOf(',');
+    if (commaIdx !== -1) {
+      r.symbol = parts[0].substring(0, commaIdx).trim();
+      r.timeframe = parts[0].substring(commaIdx + 1).trim();
+    } else {
+      r.symbol = parts[0].trim();
+    }
+  }
+
+  // 2) URL and chart ID
+  r.url = location.href;
+  var m = location.href.match(/chart\\/([^/?#]+)/);
+  if (m) r.chartId = m[1];
+
+  // 3) Try to read OHLCV from chart legend (best-effort, may fail on TV updates)
+  try {
+    var items = document.querySelectorAll('[data-name="legend-source-item"]');
+    if (items.length > 0) {
+      var vals = items[0].querySelectorAll('[class*="valueValue"]');
+      var nums = [];
+      vals.forEach(function(v) {
+        var t = v.textContent.trim();
+        if (t) nums.push(t);
+      });
+      if (nums.length >= 5) {
+        r.open = nums[0];
+        r.high = nums[1];
+        r.low = nums[2];
+        r.close = nums[3];
+        r.volume = nums[4];
+      }
+    }
+  } catch(e) {}
+
+  // 4) Try to read last price
+  try {
+    var priceAxis = document.querySelector('[class*="lastPrice"]');
+    if (priceAxis) r.lastPrice = priceAxis.textContent.trim();
+  } catch(e) {}
+
+  return JSON.stringify(r);
+})()
+`;
 
 // --- Tool 1: launch_tradingview ---
 server.tool(
@@ -228,7 +318,7 @@ server.tool(
 // --- Tool 3: get_chart_state ---
 server.tool(
   "get_chart_state",
-  "Read the current TradingView chart state including symbol, URL, and active tab info via CDP.",
+  "Read the current TradingView chart data by evaluating JavaScript inside the page via CDP WebSocket. Returns symbol, timeframe, OHLCV (if visible in legend), last price, chart ID, and URL.",
   {
     port: z.number().default(9222).describe("CDP debug port (default: 9222)"),
   },
@@ -246,9 +336,8 @@ server.tool(
       };
     }
 
-    const state = await getChartState(port);
-
-    if (!state.found) {
+    const tab = await findTVTab(port);
+    if (!tab || !tab.webSocketDebuggerUrl) {
       return {
         content: [
           {
@@ -259,17 +348,45 @@ server.tool(
       };
     }
 
-    const urlMatch = state.url?.match(/tradingview\.com\/chart\/([^/]+)/);
-    const chartId = urlMatch?.[1] || "unknown";
+    try {
+      const raw = await cdpEvaluate(tab.webSocketDebuggerUrl, CHART_EXTRACT_JS);
+      const data = JSON.parse(raw);
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Chart state retrieved.\n\nChart ID: ${chartId}\nTitle: ${state.title || "unknown"}\nURL: ${state.url}`,
-        },
-      ],
-    };
+      let lines = [];
+      if (data.symbol) lines.push(`Symbol: ${data.symbol}`);
+      if (data.timeframe) lines.push(`Timeframe: ${data.timeframe}`);
+      if (data.lastPrice) lines.push(`Last price: ${data.lastPrice}`);
+      if (data.open) {
+        lines.push(`Open: ${data.open}`);
+        lines.push(`High: ${data.high}`);
+        lines.push(`Low: ${data.low}`);
+        lines.push(`Close: ${data.close}`);
+      }
+      if (data.volume) lines.push(`Volume: ${data.volume}`);
+      if (data.chartId) lines.push(`Chart ID: ${data.chartId}`);
+      if (data.url) lines.push(`URL: ${data.url}`);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: lines.length > 0
+              ? `Chart data:\n\n${lines.join("\n")}`
+              : `Connected to TradingView tab but could not extract chart data.\n\nTitle: ${tab.title}\nURL: ${tab.url}`,
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed to read chart data via CDP WebSocket.\n\nError: ${err.message}\nTab: ${tab.url}\n\nThe tab was found but JavaScript evaluation failed.`,
+          },
+        ],
+        isError: true,
+      };
+    }
   }
 );
 
