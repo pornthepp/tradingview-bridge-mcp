@@ -615,7 +615,7 @@ server.tool(
               { time: time, price: l.price },
               {
                 shape: "horizontal_line",
-                lock: true,
+                lock: false,
                 disableSelection: false,
                 disableSave: false,
                 overrides: {
