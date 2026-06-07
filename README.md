@@ -16,6 +16,9 @@ Works with **any MCP-compatible AI agent** — Claude Code, Codex CLI, Gemini CL
 | `draw_trendline` | Draw a trendline between two time+price points |
 | `draw_rectangle` | Draw a rectangle zone (supply/demand, consolidation areas) |
 | `remove_drawings` | Remove all drawings or specific ones by ID |
+| `get_bars` | Fetch OHLCV data for multiple candles (bulk historical data) |
+| `create_indicator` | Add technical indicators (MA, RSI, MACD, Bollinger Bands, etc.) |
+| `pine_compile` | Write and compile Pine Script in the Pine Editor |
 | `evaluate` | Run arbitrary JavaScript inside the TradingView page |
 
 ## Prerequisites
@@ -75,6 +78,26 @@ Mark the supply zone between 71000-74000 as a red rectangle,
 and draw a trendline from the recent swing low to the current price.
 ```
 
+### Fetch historical data
+
+```
+Get the last 50 candles of OHLCV data from my current chart
+and calculate the average volume.
+```
+
+### Add indicators
+
+```
+Add EMA 20 and EMA 50 to my chart, then add RSI with length 14.
+```
+
+### Backtest with Pine Script
+
+```
+Write a Pine Script strategy for RSI crossover (buy when RSI crosses above 30,
+sell when it crosses below 70) with 1% stop loss, then compile it on my chart.
+```
+
 ### Advanced: run JavaScript
 
 ```
@@ -118,10 +141,11 @@ AI Agent  ──MCP──▶  tradingview-bridge-mcp  ──CDP WebSocket──�
 
 ## Limitations
 
-- **`get_chart_state` reads only 1 candle** — it returns OHLCV from the chart legend, which shows data for the candle currently under the cursor, not full historical data.
-- **No bulk historical data tool** — use `evaluate` to run JavaScript via TradingView's internal API (e.g. `TradingViewApi.activeChart().getSeries()`) to access loaded bar data if needed.
+- **`get_chart_state` reads only 1 candle** — it returns OHLCV from the chart legend (the candle under cursor). Use `get_bars` for bulk historical data.
+- **`get_bars` returns only loaded data** — TradingView loads a limited number of bars. Scroll left on the chart to load more history before fetching.
 - **Drawing tools need timestamps** — `draw_trendline` and `draw_rectangle` require Unix timestamps (seconds) for point coordinates. Use `evaluate` to query visible range first if needed.
-- **DOM-based reads may break** — OHLCV and last price are read from DOM elements. TradingView UI updates may change class names. Symbol and timeframe (parsed from page title) are stable.
+- **`pine_compile` uses DOM interaction** — it interacts with the Pine Editor via DOM selectors which may break on TradingView UI updates. Open Pine Editor (Alt+P) before using.
+- **DOM-based reads may break** — OHLCV and last price in `get_chart_state` are read from DOM elements. TradingView UI updates may change class names. Symbol and timeframe (parsed from page title) are stable.
 
 ## Troubleshooting
 

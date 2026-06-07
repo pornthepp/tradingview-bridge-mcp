@@ -879,7 +879,322 @@ server.tool(
   }
 );
 
-// --- Tool 9: evaluate ---
+// --- Tool 9: get_bars ---
+server.tool(
+  "get_bars",
+  "Fetch OHLCV bar data (multiple candles) from the currently loaded TradingView chart. Uses TradingViewApi.activeChart().exportData() to get historical data that is already loaded in the chart.",
+  {
+    count: z
+      .number()
+      .default(100)
+      .describe("Number of most recent bars to return (default: 100)"),
+    include_studies: z
+      .boolean()
+      .default(false)
+      .describe("Include indicator/study values in the output (default: false)"),
+    port: z.number().default(9222).describe("CDP debug port (default: 9222)"),
+  },
+  async ({ count, include_studies, port }) => {
+    let session;
+    try {
+      session = await openTVSession(port);
+      if (!session) {
+        return {
+          content: [{ type: "text", text: "No TradingView tab found. Run launch_browser first." }],
+          isError: true,
+        };
+      }
+
+      const result = await session.evaluate(`
+        (async function() {
+          try {
+            var chart = TradingViewApi.activeChart();
+            var data = await chart.exportData({
+              includeTime: true,
+              includeSeries: true,
+              includeStudies: ${include_studies}
+            });
+            var bars = data.data.slice(-${count});
+            return JSON.stringify({
+              schema: data.schema,
+              total_loaded: data.data.length,
+              returned: bars.length,
+              bars: bars
+            });
+          } catch(e) {
+            return JSON.stringify({ error: e.message || String(e) });
+          }
+        })()
+      `);
+
+      const data = JSON.parse(result);
+
+      if (data.error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to export chart data.\n\nError: ${data.error}\n\nThis may mean exportData() is not available. Try using evaluate tool to explore: TradingViewApi.activeChart()`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      let output = `Bars: ${data.returned} of ${data.total_loaded} loaded\nSchema: ${data.schema.join(", ")}\n\n`;
+
+      const maxPreview = Math.min(data.returned, 10);
+      for (let i = 0; i < maxPreview; i++) {
+        const bar = data.bars[i];
+        const row = data.schema.map((col, j) => {
+          if (col.toLowerCase() === "time") {
+            return new Date(bar[j] * 1000).toISOString().slice(0, 16);
+          }
+          return bar[j];
+        });
+        output += row.join(" | ") + "\n";
+      }
+
+      if (data.returned > 10) {
+        output += `... and ${data.returned - 10} more bars\n`;
+      }
+
+      output += `\nFull data returned as JSON in the bars array (${data.returned} rows x ${data.schema.length} columns).`;
+
+      return {
+        content: [
+          { type: "text", text: output },
+          { type: "text", text: JSON.stringify(data) },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          { type: "text", text: `Failed to get bars.\n\nError: ${err.message}` },
+        ],
+        isError: true,
+      };
+    } finally {
+      session?.close();
+    }
+  }
+);
+
+// --- Tool 10: create_indicator ---
+server.tool(
+  "create_indicator",
+  'Add a technical indicator/study to the TradingView chart. Uses TradingViewApi.activeChart().createStudy(). Common names: "Moving Average", "RSI", "MACD", "Bollinger Bands", "EMA", "Volume", "Stochastic", "ATR", "Supertrend", "Ichimoku Cloud".',
+  {
+    name: z
+      .string()
+      .describe('Indicator name, e.g. "Moving Average", "RSI", "MACD", "Bollinger Bands", "EMA"'),
+    inputs: z
+      .record(z.any())
+      .optional()
+      .describe('Indicator inputs as key-value pairs, e.g. { "length": 20 } for MA or { "fast": 12, "slow": 26, "signal": 9 } for MACD'),
+    force_overlay: z
+      .boolean()
+      .default(false)
+      .describe("Force indicator to overlay on the main chart (default: false, uses indicator default)"),
+    port: z.number().default(9222).describe("CDP debug port (default: 9222)"),
+  },
+  async ({ name, inputs, force_overlay, port }) => {
+    let session;
+    try {
+      session = await openTVSession(port);
+      if (!session) {
+        return {
+          content: [{ type: "text", text: "No TradingView tab found. Run launch_browser first." }],
+          isError: true,
+        };
+      }
+
+      const inputsArg = inputs ? JSON.stringify(inputs) : "{}";
+      const result = await session.evaluate(`
+        (async function() {
+          try {
+            var chart = TradingViewApi.activeChart();
+            var id = await chart.createStudy(
+              ${JSON.stringify(name)},
+              ${force_overlay},
+              false,
+              ${inputsArg}
+            );
+            return JSON.stringify({ id: id, name: ${JSON.stringify(name)} });
+          } catch(e) {
+            return JSON.stringify({ error: e.message || String(e) });
+          }
+        })()
+      `);
+
+      const data = JSON.parse(result);
+
+      if (data.error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to add indicator "${name}".\n\nError: ${data.error}\n\nCheck the indicator name. Common names: "Moving Average", "RSI", "MACD", "Bollinger Bands", "EMA", "Volume", "Stochastic", "ATR".`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Indicator added: ${data.name}\nID: ${data.id}${inputs ? "\nInputs: " + JSON.stringify(inputs) : ""}`,
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          { type: "text", text: `Failed to add indicator.\n\nError: ${err.message}` },
+        ],
+        isError: true,
+      };
+    } finally {
+      session?.close();
+    }
+  }
+);
+
+// --- Tool 11: pine_compile ---
+server.tool(
+  "pine_compile",
+  "Write Pine Script code into the TradingView Pine Editor and compile it. Opens the Pine Editor if not visible, sets the code, and clicks compile. Note: this interacts with DOM elements which may break on TradingView UI updates.",
+  {
+    code: z
+      .string()
+      .describe("Pine Script source code to compile"),
+    port: z.number().default(9222).describe("CDP debug port (default: 9222)"),
+  },
+  async ({ code, port }) => {
+    let session;
+    try {
+      session = await openTVSession(port);
+      if (!session) {
+        return {
+          content: [{ type: "text", text: "No TradingView tab found. Run launch_browser first." }],
+          isError: true,
+        };
+      }
+
+      const codeEscaped = JSON.stringify(code);
+      const result = await session.evaluate(`
+        (async function() {
+          function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+          try {
+            // 1. Open Pine Editor if not visible
+            var pineTab = document.querySelector('[data-name="pine-editor"]');
+            if (pineTab) { pineTab.click(); await sleep(500); }
+
+            // 2. Find Monaco editor instance
+            var editorEl = document.querySelector('.pine-editor-container .monaco-editor, [class*="pine-editor"] .monaco-editor');
+            if (!editorEl) {
+              // Try opening via bottom panel
+              var bottomPanelBtn = document.querySelector('[data-name="scripteditor"]') ||
+                                   document.querySelector('[id*="pine"]') ||
+                                   document.querySelector('button[aria-label*="Pine"]');
+              if (bottomPanelBtn) { bottomPanelBtn.click(); await sleep(1000); }
+              editorEl = document.querySelector('.pine-editor-container .monaco-editor, [class*="pine-editor"] .monaco-editor');
+            }
+
+            if (!editorEl) {
+              return JSON.stringify({ error: "Pine Editor not found. Open it manually first (Alt+P or click Pine Editor tab)." });
+            }
+
+            // 3. Set code via Monaco API
+            var monacoEditor = editorEl.__proto__?.constructor?._instances?.values?.()?.next?.()?.value ||
+                               monaco?.editor?.getEditors?.()[0] ||
+                               monaco?.editor?.getModels?.()[0];
+
+            if (monaco && monaco.editor) {
+              var editors = monaco.editor.getEditors ? monaco.editor.getEditors() : [];
+              if (editors.length > 0) {
+                var model = editors[0].getModel();
+                if (model) {
+                  editors[0].setValue(${codeEscaped});
+                  await sleep(300);
+                }
+              } else {
+                var models = monaco.editor.getModels();
+                if (models.length > 0) {
+                  models[0].setValue(${codeEscaped});
+                  await sleep(300);
+                }
+              }
+            } else {
+              return JSON.stringify({ error: "Monaco editor API not accessible." });
+            }
+
+            // 4. Click compile/add to chart button
+            await sleep(500);
+            var compileBtn = document.querySelector('[data-name="pine-editor-compile-button"]') ||
+                             document.querySelector('button[class*="compile"]') ||
+                             document.querySelector('[class*="pine-editor"] button[class*="apply"]');
+
+            if (compileBtn) {
+              compileBtn.click();
+              await sleep(2000);
+
+              // 5. Check for errors
+              var errorEl = document.querySelector('[class*="pine-editor"] [class*="error"], [class*="compile-error"]');
+              if (errorEl && errorEl.textContent.trim()) {
+                return JSON.stringify({ compiled: false, error: errorEl.textContent.trim() });
+              }
+              return JSON.stringify({ compiled: true });
+            } else {
+              return JSON.stringify({ error: "Compile button not found. Code was set in editor — compile manually." });
+            }
+          } catch(e) {
+            return JSON.stringify({ error: e.message || String(e) });
+          }
+        })()
+      `);
+
+      const data = JSON.parse(result);
+
+      if (data.error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Pine Script issue.\n\n${data.error}\n\nTip: Make sure the Pine Editor tab is visible (press Alt+P).`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: data.compiled
+              ? "Pine Script compiled and added to chart."
+              : `Pine Script set in editor but compilation status unknown.`,
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          { type: "text", text: `Failed to compile Pine Script.\n\nError: ${err.message}` },
+        ],
+        isError: true,
+      };
+    } finally {
+      session?.close();
+    }
+  }
+);
+
+// --- Tool 12: evaluate ---
 server.tool(
   "evaluate",
   "Execute arbitrary JavaScript inside the TradingView chart page via CDP. Use this for advanced interactions: reading indicators, interacting with Pine Editor, opening Strategy Tester, clicking UI elements, or any action not covered by other tools. Returns the result of the expression.",
