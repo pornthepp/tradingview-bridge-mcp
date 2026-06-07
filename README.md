@@ -116,6 +116,13 @@ AI Agent  ──MCP──▶  tradingview-bridge-mcp  ──CDP WebSocket──�
 4. `navigate` changes symbol/timeframe via URL navigation
 5. `evaluate` runs any JavaScript — interact with Pine Editor, Strategy Tester, DOM elements, etc.
 
+## Limitations
+
+- **`get_chart_state` reads only 1 candle** — it returns OHLCV from the chart legend, which shows data for the candle currently under the cursor, not full historical data.
+- **No bulk historical data tool** — use `evaluate` to run JavaScript via TradingView's internal API (e.g. `TradingViewApi.activeChart().getSeries()`) to access loaded bar data if needed.
+- **Drawing tools need timestamps** — `draw_trendline` and `draw_rectangle` require Unix timestamps (seconds) for point coordinates. Use `evaluate` to query visible range first if needed.
+- **DOM-based reads may break** — OHLCV and last price are read from DOM elements. TradingView UI updates may change class names. Symbol and timeframe (parsed from page title) are stable.
+
 ## Troubleshooting
 
 | Problem | Solution |
